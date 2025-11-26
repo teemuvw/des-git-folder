@@ -1,5 +1,8 @@
 import pytest
-from des import ascii_to_bits_in_list, pc1_permutation, generate_subkeys, xor_round_substitution, des_encrypt, shifts, bits_to_blocks, create_initialization_vector
+from des import ascii_to_bits_in_list, pc1_permutation, generate_subkeys, xor_round_substitution, des_encrypt, shifts, bits_to_blocks, create_initialization_vector, hex_encyption_to_blocks, xor_round_substitution_reversed
+import string
+import random
+
 
 # --- ascii_to_bits_in_list tests ---
 def test_ascii_to_bits_basic():
@@ -35,8 +38,9 @@ def test_bits_to_blocks():
         assert len(blocks[x//8]) == 64  # Blocks should be 64 bits
 
 
-# --- xor_round_substitution tests ---
-def test_xor_round_substitution_type():
+# --- encryption test ---
+# correct length encryption
+def test_enryption():
     for x in range(0,100):
         bits = ascii_to_bits_in_list(list(x*"*"))
         blocks = bits_to_blocks(bits)
@@ -48,3 +52,27 @@ def test_xor_round_substitution_type():
         assert isinstance(bits, str)
         assert len(bits) >= 128 # Tests that final_output is > 128 
         assert len(bits) == (x//8 +2) *64 # Tests that final_output is multiple of 64
+
+# --- decryption different inputs test ---
+# test that deciphering works
+# test using 1-100 long plaintext as random ASCII input
+# set key used
+def test_decryption_with_different_inputs():
+    for x in range(1,100):
+
+        plaintext = ''.join(random.choice(string.printable) for _ in range(x))
+
+        bits = ascii_to_bits_in_list(plaintext)
+        plaintext_blocks = bits_to_blocks(bits)
+        key = ascii_to_bits_in_list("12345678")
+        key_blocks = bits_to_blocks(key)
+        permuted = pc1_permutation(key)
+        subkeys = generate_subkeys(permuted)
+        initialization_vector = create_initialization_vector()
+        ciphertext = xor_round_substitution(plaintext_blocks, subkeys, initialization_vector)
+        bits = bin(int(ciphertext, 16))[2:].zfill(len(ciphertext) * 4)
+        hex_to_blocks = hex_encyption_to_blocks(ciphertext)
+        deciphertext = xor_round_substitution_reversed(hex_to_blocks, subkeys)
+
+        assert deciphertext == plaintext # Tests that ciphertext can be deciphered to become original plaintext
+        

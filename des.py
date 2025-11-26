@@ -289,6 +289,130 @@ def xor_round_substitution(plaintext_blocks: list, kn: list, iv: list) -> str:
     return hex(int(final_output, 2))[2:].zfill(hex_length)
 
 
+def hex_encyption_to_blocks(ciphertext: str) -> list:
+    """
+    Breaks ciphertext hex into list of 64 bit blocks
+    """
+    bits = bin(int(ciphertext, 16))[2:].zfill(len(ciphertext) * 4)
+    bits_as_list = [bit for bit in bits]
+    ciphertext_as_blocks = []
+    for x in range(0, int(len(bits_as_list)/64)):
+        ciphertext_as_blocks.append([])
+        ciphertext_as_blocks[x] = bits_as_list[x*64:x*64+64]
+
+    return ciphertext_as_blocks
+
+
+def xor_round_substitution_reversed(
+    ciphertext_as_blocks: list,
+    kn: list
+) -> str:
+    """
+    Block formula for plaintext blocks = P_n=D_K (C_n⊕C_(n-1))
+    Block formula for last plaintext block = P_1=D_K (C_1⊕IV)
+    Blocks decryption last to first
+    Reverse order DES round function applied 16 times per block:
+    Subkeys applied reverse order from encryption
+    IP, applies XOR with subkeys, S-box substitution & permutation (SP),
+    LN = previous RN, RN = previous LN XOR with SP
+    Final output = P1|P2|P3|...
+    """
+    final_result = []
+    current_cn = []
+
+    for block in range(len(ciphertext_as_blocks)-1, 0, -1):
+
+        IP_applied = [
+            ciphertext_as_blocks[block][ip[y] - 1] for y in range(64)
+            ]
+
+        ln = IP_applied[:32]
+        rn = IP_applied[32:]
+
+        for round_number in range(15, -1, -1):
+
+            # Expand RN from 32 to 48 bits
+            expanded_rn = [rn[e[y] - 1] for y in range(48)]
+
+            # XOR with round subkey
+            xored = [
+                int(a) ^ int(b) for a, b in zip(expanded_rn, kn[round_number])
+            ]
+
+            # Divide into eight 6-bit blocks
+            xored_into_sixths = [xored[i:i + 6] for i in range(0, 48, 6)]
+
+            # S-box substitution
+            substitution_n = []
+            for x in range(0, 8):
+                # Bits are shifted to combine column and row information
+                # grouped 1 << 6, 2 << 3 << 4 << 5,
+                # example 011001 is 01 and 1100
+                row_value = (
+                    xored_into_sixths[x][0] << 1
+                ) | xored_into_sixths[x][5]
+                column_value = 0
+                for bit in [xored_into_sixths[x][1], xored_into_sixths[x][2],
+                            xored_into_sixths[x][3], xored_into_sixths[x][4]]:
+                    column_value = (column_value << 1) | bit
+                substitution_n.append(sbox[x][row_value][column_value])
+
+            # Convert int to 4-bit binary and combine
+            sub_full_as_32bits = list(
+                "".join([format(x, "04b") for x in substitution_n])
+            )
+
+            # Permutation P
+            permutated_substituted_32 = [
+                sub_full_as_32bits[p[y] - 1] for y in range(32)
+            ]
+
+            # LN and RN swap/update
+            ln_old = ln
+            ln = rn
+            rn = [
+                str(int(a) ^ int(b)) for a, b in zip(
+                    ln_old, permutated_substituted_32
+                )
+            ]
+            # Final permutation after 16 rounds (swap halves)
+        rn_ln = rn + ln
+        current_cn = [rn_ln[fp[y] - 1] for y in range(64)]
+        # check if second block, then XOR with IV
+        if block == 1:
+            cipherblock_with_xor = [
+                    str(
+                        int(a) ^ int(b)
+                    ) for a, b in zip(current_cn, ciphertext_as_blocks[0])
+                    ]
+            bytes_list = [''.join(cipherblock_with_xor[i:i+8]) for i in range(
+                0, len(cipherblock_with_xor), 8)]
+            bytes_value = [(int(b, 2)) for b in bytes_list]
+            final_result.insert(0, bytes_value)
+        # If not second block, then XOR with next block right -> left
+        else:
+            cipherblock_with_xor = [
+                    str(
+                        int(a) ^ int(b)
+                    ) for a, b in zip(
+                        current_cn, ciphertext_as_blocks[block-1])
+                    ]
+            bytes_list = [''.join(cipherblock_with_xor[i:i+8]) for i in range(
+                        0, len(cipherblock_with_xor), 8)]
+            bytes_value = [(int(b, 2)) for b in bytes_list]
+            final_result.insert(0, bytes_value)
+    # combining plaintext blocks, left to right
+    final_output = []
+    for sublist in final_result:
+        final_output.extend(sublist)
+    for x in range(9):
+        if final_output.count(x) == x:
+            final_output = [y for y in final_output if y != x]
+    final_output_as_ASCII = [chr(x) for x in final_output]
+    final_output_combined = "".join(final_output_as_ASCII)
+    return final_output_combined
+
+
 def des_encrypt(plaintext: list, key: list) -> str:
     """
     Performs DES encryption for 64-bit block/blocks of plaintext.
@@ -301,11 +425,30 @@ def des_encrypt(plaintext: list, key: list) -> str:
     return xor_round_substitution(plaintext_blocks, subkeys, iv)
 
 
+def des_decrypt(ciphertext: str, key: list) -> str:
+    """
+    Performs DES decyption for hex ciphertext.
+    """
+    key_bits = ascii_to_bits_in_list(key)
+    subkeys = generate_subkeys(pc1_permutation(key_bits))
+    encryption_as_blocks = hex_encyption_to_blocks(ciphertext)
+    return xor_round_substitution_reversed(encryption_as_blocks, subkeys)
+
+
 def main():
-    key = list("")
-    plaintext_input = list("")
-    ciphertext = des_encrypt(plaintext_input, key)
-    print("Ciphertext:", ciphertext)
+    # command line interface to test encyption and decryption
+    while True:
+        mode = input("Encryption or Decryption mode (0/1): ")
+        if mode == "0":
+            plaintext_input = input("Plaintext input: ")
+            key = input("Key input: ")
+            ciphertext = des_encrypt(plaintext_input, key)
+            print("Ciphertext:", ciphertext)
+        if mode == "1":
+            decipher_input = input("Decipher input: ")
+            key = input("Key input: ")
+            deciphertext = des_decrypt(decipher_input, key)
+            print("Deciphertext:", deciphertext)
 
 
 if __name__ == "__main__":
